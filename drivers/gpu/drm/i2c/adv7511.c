@@ -727,10 +727,17 @@ adv7511_detect(struct adv7511 *adv7511,
 }
 
 static int adv7511_mode_valid(struct adv7511 *adv7511,
-				     const struct drm_display_mode *mode)
+			      struct drm_display_mode *mode)
 {
 	if (mode->clock > 165000)
 		return MODE_CLOCK_HIGH;
+
+	/* current support modes */
+	if ((mode->hdisplay == 1920 && mode->vdisplay == 1080) ||
+	    (mode->hdisplay == 1280 && mode->vdisplay == 720))
+		mode->type |= DRM_MODE_TYPE_PREFERRED;
+	else
+		mode->type &= ~DRM_MODE_TYPE_PREFERRED;
 
 	return MODE_OK;
 }
