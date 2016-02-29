@@ -805,13 +805,15 @@ export KBUILD_IMAGE ?= vmlinux
 #
 # INSTALL_PATH specifies where to place the updated kernel and system map
 # images. Default is /boot, but you can set it to other values
-export	INSTALL_PATH ?= /boot
+#export	INSTALL_PATH ?= /boot
+export	INSTALL_PATH ?= out
 
 #
 # INSTALL_DTBS_PATH specifies a prefix for relocations required by build roots.
 # Like INSTALL_MOD_PATH, it isn't defined in the Makefile, but can be passed as
 # an argument if needed. Otherwise it defaults to the kernel install path
 #
+export INSTALL_MOD_PATH ?= out
 export INSTALL_DTBS_PATH ?= $(INSTALL_PATH)/dtbs/$(KERNELRELEASE)
 
 #
