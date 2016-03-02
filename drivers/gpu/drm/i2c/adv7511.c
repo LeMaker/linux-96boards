@@ -727,10 +727,17 @@ adv7511_detect(struct adv7511 *adv7511,
 }
 
 static int adv7511_mode_valid(struct adv7511 *adv7511,
-				     const struct drm_display_mode *mode)
+			      struct drm_display_mode *mode)
 {
 	if (mode->clock > 165000)
 		return MODE_CLOCK_HIGH;
+
+	/* current support modes */
+	if ((mode->hdisplay == 1920 && mode->vdisplay == 1080) ||
+	    (mode->hdisplay == 1280 && mode->vdisplay == 720))
+		mode->type |= DRM_MODE_TYPE_PREFERRED;
+	else
+		mode->type &= ~DRM_MODE_TYPE_PREFERRED;
 
 	return MODE_OK;
 }
@@ -911,6 +918,41 @@ static struct drm_encoder_slave_funcs adv7511_encoder_funcs = {
  * Bridge and connector functions
  */
 
+/*
+ * 720p@60 works well on most monitors, so add to defaut modes
+ */
+static struct drm_display_mode mode_720p = {
+	.name		= "1280x720",
+	.vrefresh	= 60,
+	.clock		= 74250,
+	.hdisplay	= 1280,
+	.hsync_start	= 1390,
+	.hsync_end	= 1430,
+	.htotal		= 1650,
+	.vdisplay	= 720,
+	.vsync_start	= 725,
+	.vsync_end	= 730,
+	.vtotal		= 750,
+	.type		= DRM_MODE_TYPE_PREFERRED | DRM_MODE_TYPE_DRIVER,
+	.flags		= DRM_MODE_FLAG_PHSYNC | DRM_MODE_FLAG_PVSYNC,
+	.width_mm	= 735,
+	.height_mm	= 420,
+};
+
+static int adv7533_connector_get_default_modes(struct drm_connector *connector)
+{
+	struct drm_display_mode *mode;
+
+	/* 1280x720@60: 720P */
+	mode = drm_mode_duplicate(connector->dev, &mode_720p);
+	if (!mode) {
+		DRM_ERROR("failed to create a new display mode\n");
+	}
+	drm_mode_probed_add(connector, mode);
+
+	return 1;
+}
+
 static struct adv7511 *connector_to_adv7511(struct drm_connector *connector)
 {
 	return container_of(connector, struct adv7511, connector);
@@ -920,8 +962,12 @@ static struct adv7511 *connector_to_adv7511(struct drm_connector *connector)
 static int adv7533_connector_get_modes(struct drm_connector *connector)
 {
 	struct adv7511 *adv = connector_to_adv7511(connector);
+	unsigned int count;
 
-	return adv7511_get_modes(adv, connector);
+	count = adv7511_get_modes(adv, connector);
+	count += adv7533_connector_get_default_modes(connector);
+
+	return count;
 }
 
 static struct drm_encoder *
