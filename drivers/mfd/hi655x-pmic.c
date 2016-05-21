@@ -1,8 +1,9 @@
 /*
- * Device driver for regulators in hi655x IC
+ * Device driver for MFD hi655x PMIC
  *
  * Copyright (c) 2016 Hisilicon.
  *
+ * Authors:
  * Chen Feng <puck.chen@hisilicon.com>
  * Fei  Wang <w.f@huawei.com>
  *
@@ -11,16 +12,16 @@
  * published by the Free Software Foundation.
  */
 
+#include <linux/gpio.h>
 #include <linux/io.h>
 #include <linux/interrupt.h>
 #include <linux/init.h>
-#include <linux/gpio.h>
-#include <linux/of_gpio.h>
-#include <linux/module.h>
-#include <linux/platform_device.h>
-#include <linux/of_platform.h>
 #include <linux/mfd/core.h>
 #include <linux/mfd/hi655x-pmic.h>
+#include <linux/module.h>
+#include <linux/of_gpio.h>
+#include <linux/of_platform.h>
+#include <linux/platform_device.h>
 #include <linux/regmap.h>
 
 static const struct mfd_cell hi655x_pmic_devs[] = {
@@ -38,24 +39,25 @@ static const struct regmap_irq hi655x_irqs[] = {
 	{ .reg_offset = 0, .mask = RESERVE_INT },
 };
 
+static struct of_device_id of_hi655x_pmic_child_match_tbl[] = {
+	{ .compatible = "hisilicon,hi6552-regulator-pmic", },
+	{ .compatible = "hisilicon,hi6552-powerkey", },
+	{ .compatible = "hisilicon,hi6552-usbvbus", },
+	{ .compatible = "hisilicon,hi6552-coul", },
+	{ .compatible = "hisilicon,hi6552-pmu-rtc", },
+	{ .compatible = "hisilicon,hi6552-pmic-mntn", },
+	{ /* end */ }
+};
+
 static const struct regmap_irq_chip hi655x_irq_chip = {
 	.name = "hi655x-pmic",
 	.irqs = hi655x_irqs,
 	.num_regs = 1,
 	.num_irqs = ARRAY_SIZE(hi655x_irqs),
 	.status_base = HI655X_IRQ_STAT_BASE,
+	.ack_base = HI655X_IRQ_STAT_BASE,
 	.mask_base = HI655X_IRQ_MASK_BASE,
 };
-
-static unsigned int hi655x_pmic_get_version(struct hi655x_pmic *pmic)
-{
-	u32 val;
-
-	regmap_read(pmic->regmap,
-		    HI655X_BUS_ADDR(HI655X_VER_REG), &val);
-
-	return val;
-}
 
 static struct regmap_config hi655x_regmap_config = {
 	.reg_bits = 32,
@@ -84,24 +86,24 @@ static int hi655x_pmic_probe(struct platform_device *pdev)
 	void __iomem *base;
 
 	pmic = devm_kzalloc(dev, sizeof(*pmic), GFP_KERNEL);
+	if (!pmic)
+		return -ENOMEM;
 	pmic->dev = dev;
 
 	pmic->res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	if (!pmic->res) {
-		dev_err(dev, "platform_get_resource err\n");
+	if (!pmic->res)
 		return -ENOENT;
-	}
+
 	base = devm_ioremap_resource(dev, pmic->res);
-	if (!base) {
-		dev_err(dev, "cannot map register memory\n");
+	if (!base)
 		return -ENOMEM;
-	}
+
 	pmic->regmap = devm_regmap_init_mmio_clk(dev, NULL, base,
 						 &hi655x_regmap_config);
 
-	pmic->ver = hi655x_pmic_get_version(pmic);
+	regmap_read(pmic->regmap, HI655X_BUS_ADDR(HI655X_VER_REG), &pmic->ver);
 	if ((pmic->ver < PMU_VER_START) || (pmic->ver > PMU_VER_END)) {
-		dev_warn(dev, "it is wrong pmu version\n");
+		dev_warn(dev, "PMU version %d unsupported\n", pmic->ver);
 		return -EINVAL;
 	}
 
@@ -109,14 +111,14 @@ static int hi655x_pmic_probe(struct platform_device *pdev)
 
 	pmic->gpio = of_get_named_gpio(np, "pmic-gpios", 0);
 	if (!gpio_is_valid(pmic->gpio)) {
-		dev_err(dev, "cannot get the pmic-gpios\n");
+		dev_err(dev, "Failed to get the pmic-gpios\n");
 		return -ENODEV;
 	}
 
 	ret = devm_gpio_request_one(dev, pmic->gpio, GPIOF_IN,
 				    "hi655x_pmic_irq");
 	if (ret < 0) {
-		dev_err(dev, "failed to request gpio %d  ret = %d\n",
+		dev_err(dev, "Failed to request gpio %d  ret = %d\n",
 			pmic->gpio, ret);
 		return ret;
 	}
@@ -125,18 +127,20 @@ static int hi655x_pmic_probe(struct platform_device *pdev)
 				  IRQF_TRIGGER_LOW | IRQF_NO_SUSPEND, 0,
 				  &hi655x_irq_chip, &pmic->irq_data);
 	if (ret) {
-		dev_err(dev, "add pmic irq chip error! ret %d\n", ret);
+		dev_err(dev, "Failed to obtain 'hi655x_pmic_irq' %d\n", ret);
 		return ret;
 	}
 
-	/* bind pmic to device */
 	platform_set_drvdata(pdev, pmic);
 
-	ret = mfd_add_devices(dev, 0, hi655x_pmic_devs,
+	/* populate sub nodes */
+	of_platform_populate(np, of_hi655x_pmic_child_match_tbl, NULL, dev);
+
+	ret = mfd_add_devices(dev, PLATFORM_DEVID_AUTO, hi655x_pmic_devs,
 			      ARRAY_SIZE(hi655x_pmic_devs), NULL, 0, NULL);
 	if (ret) {
-		dev_err(dev, "add mfd devices failed: %d\n", ret);
-		regmap_del_irq_chip(pmic->irq, pmic->irq_data);
+		dev_err(dev, "Failed to register device %d\n", ret);
+		regmap_del_irq_chip(gpio_to_irq(pmic->gpio), pmic->irq_data);
 		return ret;
 	}
 
@@ -145,12 +149,14 @@ static int hi655x_pmic_probe(struct platform_device *pdev)
 
 static int hi655x_pmic_remove(struct platform_device *pdev)
 {
-	mfd_remove_devices(&pdev->dev);
+	struct hi655x_pmic *pmic = platform_get_drvdata(pdev);
 
+	regmap_del_irq_chip(gpio_to_irq(pmic->gpio), pmic->irq_data);
+	mfd_remove_devices(&pdev->dev);
 	return 0;
 }
 
-static const struct of_device_id of_hi655x_pmic_match_tbl[] = {
+static const struct of_device_id hi655x_pmic_match[] = {
 	{ .compatible = "hisilicon,hi655x-pmic", },
 	{},
 };
@@ -158,7 +164,7 @@ static const struct of_device_id of_hi655x_pmic_match_tbl[] = {
 static struct platform_driver hi655x_pmic_driver = {
 	.driver	= {
 		.name =	"hi655x-pmic",
-		.of_match_table = of_hi655x_pmic_match_tbl,
+		.of_match_table = of_match_ptr(hi655x_pmic_match),
 	},
 	.probe  = hi655x_pmic_probe,
 	.remove = hi655x_pmic_remove,
@@ -166,5 +172,5 @@ static struct platform_driver hi655x_pmic_driver = {
 module_platform_driver(hi655x_pmic_driver);
 
 MODULE_AUTHOR("Chen Feng <puck.chen@hisilicon.com>");
-MODULE_DESCRIPTION("Hisilicon hi655x pmic driver");
+MODULE_DESCRIPTION("Hisilicon hi655x PMIC driver");
 MODULE_LICENSE("GPL v2");
